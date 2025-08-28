@@ -44,17 +44,22 @@ from paddleformers.transformers.model_utils import unwrap_model
 from paddleformers.utils.log import logger
 
 from ernie.callbacks import LayerwiseDropoutCallback
-from ernie.configuration import Ernie4_5_MoeConfig
-from ernie.modeling_moe import Ernie4_5_MoeForCausalLM
-from ernie.modeling_moe_pp import Ernie4_5_MoeForCausalLMPipe
-from ernie.tokenizer import Ernie4_5_Tokenizer
+
+# from ernie.configuration import Ernie4_5_MoeConfig
+# from ernie.modeling_moe import Ernie4_5_MoeForCausalLM
+# from ernie.modeling_moe_pp import Ernie4_5_MoeForCausalLMPipe
+# from ernie.tokenizer import Ernie4_5_Tokenizer
+
+from paddleformers.transformers import Ernie4_5Config, Ernie4_5ForCausalLM, Ernie4_5Tokenizer
+
+
 from ernie.utils.common_utils import (
     calculate_effective_tokens,
     check_refined_recompute,
     estimate_training,
     save_stop_info,
 )
-from ernie.utils.download_utils import check_download_repo
+# from ernie.utils.download_utils import check_download_repo
 
 from ...hparams import (
     DataArguments,
@@ -202,14 +207,20 @@ def run_sft(
 
     logger.info("Start to load model ...")
 
-    model_args.model_name_or_path = check_download_repo(
-        model_args.model_name_or_path,
-        download_hub=model_args.download_hub,
-    )
+    # model_args.model_name_or_path = check_download_repo(
+    #     model_args.model_name_or_path,
+    #     from_hf_hub=model_args.from_hf_hub,
+    #     from_aistudio=model_args.from_aistudio,
+    #     from_modelscope=model_args.from_modelscope,
+    # )
 
-    model_class = Ernie4_5_MoeForCausalLM
-    if finetuning_args.pipeline_parallel_degree > 1:
-        model_class = Ernie4_5_MoeForCausalLMPipe
+    if getattr(model_args, "from_modelscope", False):
+        os.environ["from_modelscope"] = "True"
+
+    model_class = Ernie4_5ForCausalLM
+    # if finetuning_args.pipeline_parallel_degree > 1:
+    #     model_class = Ernie4_5_MoeForCausalLMPipe
+
     if (
         model_args.moe_group.lower() in {"data", "dp"}
         and finetuning_args.data_parallel_degree > 1
@@ -268,30 +279,13 @@ def run_sft(
             weight_quantize_algo=finetuning_args.weight_quantize_algo
         )
 
-    try:
-        from paddleformers.utils.download import (
-            DownloadSource,
-        )  # test if paddleformers is the newest
-    except Exception:
-        DownloadSource = None
-
-    download_source_kwargs = {}
-    if DownloadSource is None:
-        if model_args.download_hub == "huggingface":
-            download_source_kwargs["from_hf_hub"] = True
-        elif model_args.download_hub == "aistudio":
-            download_source_kwargs["from_aistudio"] = True
-        elif model_args.download_hub == "modelscope":
-            download_source_kwargs["from_modelscope"] = True
-    else:
-        download_source_kwargs["download_hub"] = model_args.download_hub
-
-    model_config = Ernie4_5_MoeConfig.from_pretrained(
+    model_config = Ernie4_5Config.from_pretrained(
         model_args.model_name_or_path,
         dtype=dtype,
         quantization_config=quantization_config,
-        convert_from_torch=False,
-        **download_source_kwargs,
+        from_hf_hub=model_args.from_hf_hub,
+        from_aistudio=model_args.from_aistudio,
+
     )
     model_config.tensor_parallel_degree = finetuning_args.tensor_parallel_degree
     model_config.tensor_parallel_rank = finetuning_args.tensor_parallel_rank
@@ -317,16 +311,16 @@ def run_sft(
     model_config.max_sequence_length = data_args.max_seq_len
     model_config.recompute_use_reentrant = model_args.recompute_use_reentrant
     model_config.use_sparse_flash_attn = model_args.use_sparse_flash_attn
-    model_config.use_recompute_moe = model_args.use_recompute_moe
-    model_config.moe_group = model_args.moe_group
-    model_config.moe_group_experts = model_args.moe_group_experts
-    model_config.moe_aux_loss_lambda = model_args.moe_aux_loss_lambda
-    model_config.moe_orthogonal_loss_lambda = model_args.moe_orthogonal_loss_lambda
-    model_config.moe_z_loss_lambda = model_args.moe_z_loss_lambda
-    model_config.moe_use_hard_gate = model_args.moe_use_hard_gate
-    model_config.moe_multimodal_dispatch_use_allgather = (
-        model_args.moe_multimodal_dispatch_use_allgather
-    )
+    # model_config.use_recompute_moe = model_args.use_recompute_moe
+    # model_config.moe_group = model_args.moe_group
+    # model_config.moe_group_experts = model_args.moe_group_experts
+    # model_config.moe_aux_loss_lambda = model_args.moe_aux_loss_lambda
+    # model_config.moe_orthogonal_loss_lambda = model_args.moe_orthogonal_loss_lambda
+    # model_config.moe_z_loss_lambda = model_args.moe_z_loss_lambda
+    # model_config.moe_use_hard_gate = model_args.moe_use_hard_gate
+    # model_config.moe_multimodal_dispatch_use_allgather = (
+    #     model_args.moe_multimodal_dispatch_use_allgather
+    # )
     model_config.num_nextn_predict_layers = model_args.num_nextn_predict_layers
     model_config.hidden_dropout_prob = finetuning_args.hidden_dropout_prob
     model_config.attention_probs_dropout_prob = (
@@ -335,12 +329,12 @@ def run_sft(
     model_config.num_acc_steps = finetuning_args.gradient_accumulation_steps
     model_config.multi_token_pred_lambda = finetuning_args.multi_token_pred_lambda
     model_config.use_recompute_mtp = finetuning_args.use_recompute_mtp
-    if model_args.moe_use_aux_free is False:
-        model_config.moe_use_aux_free = model_args.moe_use_aux_free
-    if model_config.moe_num_experts is None or model_config.moe_num_experts == 0:
-        model_config.moe_group = (
-            "dummy" if model_args.moe_group == "mp" else model_args.moe_group
-        )
+    # if model_args.moe_use_aux_free is False:
+    #     model_config.moe_use_aux_free = model_args.moe_use_aux_free
+    # if model_config.moe_num_experts is None or model_config.moe_num_experts == 0:
+    #     model_config.moe_group = (
+    #         "dummy" if model_args.moe_group == "mp" else model_args.moe_group
+    #     )
 
     if (
         finetuning_args.pipeline_parallel_degree > 1
@@ -352,28 +346,42 @@ def run_sft(
             weights when using Pipeline Parallelism (PP)."
         )
 
-    if model_args.continue_training or finetuning_args.weight_quantize_algo is not None:
-        model = model_class.from_pretrained(
-            model_args.model_name_or_path,
-            config=model_config,
-            convert_from_torch=False,
-            **download_source_kwargs,
-        )
-    else:
-        model = model_class.from_config(model_config, dtype=dtype)
+    # if model_args.continue_training or finetuning_args.weight_quantize_algo is not None:
+    model = model_class.from_pretrained(
+        model_args.model_name_or_path,
+        config=model_config,
+        from_hf_hub=model_args.from_hf_hub,
+        from_aistudio=model_args.from_aistudio,
+        convert_from_hf=True,
+    )
+    # else:
+    #     model = model_class.from_config(model_config, dtype=dtype)
 
-    if model.config.head_dim is None:
-        del model.config.head_dim
+    # model = Ernie4_5ForCausalLM.from_pretrained(
+    #     model_args.model_name_or_path,
+    #     dtype=dtype,
+    #     quantization_config=quantization_config,
+    #     convert_from_hf=True,
+    # )
+
+
+    # if model.config.head_dim is None:
+    #     del model.config.head_dim
 
     paddle.device.cuda.empty_cache()
     logger.info("Loading model successfully !")
     logger.debug(f"Model config: {model.config}")
     logger.info(f"{runtime_timer.log()}")
-    tokenizer = Ernie4_5_Tokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        convert_from_torch=False,
-        **download_source_kwargs,
-    )
+
+    # tokenizer = Ernie4_5_Tokenizer.from_pretrained(
+    #     model_args.model_name_or_path,
+    #     from_hf_hub=model_args.from_hf_hub,
+    #     from_aistudio=model_args.from_aistudio,
+    #     convert_from_torch=False,
+    # )
+    
+    tokenizer = Ernie4_5Tokenizer.from_pretrained(model_args.model_name_or_path)
+
 
     logger.info("Start to create dataset ...")
     dataset_config = {
@@ -428,7 +436,8 @@ def run_sft(
         collate_fn,
         tokenizer=tokenizer,
         model_args=model_args,
-        max_seq_len=data_args.max_seq_len + model_config.num_nextn_predict_layers,
+        max_seq_len=data_args.max_seq_len,
+        # max_seq_len=data_args.max_seq_len + model_config.num_nextn_predict_layers,
     )
 
     if model_args.lora:
@@ -539,6 +548,9 @@ def run_sft(
         if not p.stop_gradient or ("quantization_linear" in p.name and "w_1" in p.name)
     ]
     trainer.set_optimizer_grouped_parameters(trainable_parameters)
+
+    # with hf
+    print(f'convert_from_hf: {trainer.args.convert_from_hf}, save_to_hf: {trainer.args.save_to_hf}')
 
     if (
         finetuning_args.hidden_dropout_prob
